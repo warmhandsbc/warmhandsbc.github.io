@@ -91,6 +91,8 @@
   .stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;min-width:96px}
   .stat b{display:block;font-size:20px}
   a{color:var(--blue)}
+  .langbtn{background:var(--blue-l);color:var(--blue);font-weight:700;font-size:13px;padding:6px 12px;border-radius:99px;white-space:nowrap}
+  .toplang{position:fixed;top:12px;right:16px;z-index:7}
 </style>
 </head>
 <body>
@@ -132,6 +134,94 @@ var CLIENT_ID = '133570870998-sn0e1o2qu98c038kpd36cvuo7lcteoru.apps.googleuserco
 var TOKEN_KEY = 'wh_clock_token';
 function store(k, v){ try{ if(v===null) localStorage.removeItem(k); else localStorage.setItem(k, v); }catch(e){} }
 function load(k){ try{ return localStorage.getItem(k); }catch(e){ return null; } }
+
+/* ---------------- 語言 / Language ---------------- */
+var LANG_KEY = 'wh_clock_lang';
+var LANG = load(LANG_KEY) || (/^zh/i.test(navigator.language||'') ? 'zh' : 'en');
+function T(zh, en){ return LANG==='en' ? en : zh; }
+function langBtn(){
+  return '<button class="langbtn" onclick="toggleLang()" title="'+T('Switch to English','切換到中文')+'">'+T('EN','中文')+'</button>';
+}
+function toggleLang(){
+  LANG = LANG==='en' ? 'zh' : 'en';
+  store(LANG_KEY, LANG);
+  document.documentElement.lang = LANG==='en' ? 'en' : 'zh-Hant';
+  document.title = T('Warm Hands 員工打卡','Warm Hands Staff Clock-in');
+  if(S.me) render(); else if(document.getElementById('gbtn')) showLogin(''); else start();
+}
+/* 伺服器（API）回覆嘅中文字句 → 英文 */
+var ERR_EN = [
+  [/^未到打卡時間，最早 (.+) 可以打卡$/, function(m){ return 'Too early to clock in. You can clock in from '+t12(m[1])+'.'; }],
+  [/^呢更已經打咗卡（(.+)）$/, function(m){ return 'You already clocked in at '+t12(m[1])+'.'; }],
+  [/^呢更已經收工打卡（(.+)）$/, function(m){ return 'You already clocked out at '+t12(m[1])+'.'; }],
+  [/^呢更已取消$/, 'This shift has been cancelled.'],
+  [/^呢更資料唔齊/, 'This shift is missing its date or time. Please contact your coordinator.'],
+  [/^呢更已經過咗預定收工時間/, 'This shift has already ended, so you can no longer clock in. Please contact your coordinator.'],
+  [/^你未開工打卡$/, 'You have not clocked in yet.'],
+  [/^已經過咗收工打卡時限/, 'The clock-out time limit has passed. Please contact your coordinator.'],
+  [/^已經過咗申請期限（收工後 (\d+) 日內）$/, function(m){ return 'The deadline has passed (requests must be made within '+m[1]+' days after the shift).'; }],
+  [/^要先開工打卡先可以申請額外時間$/, 'Please clock in before requesting extra time.'],
+  [/^額外時間要係/, 'Extra time must be between 5 and 480 minutes.'],
+  [/^請填寫原因$/, 'Please enter a reason.'],
+  [/^呢更唔係你嘅$/, 'This shift is not assigned to you.'],
+  [/^搵唔到呢更/, 'Shift not found. It may have been changed — please refresh.'],
+  [/^系統忙緊/, 'The system is busy. Please try again in a few seconds.'],
+  [/^你冇權限睇呢頁$/, 'You do not have permission to view this page.'],
+  [/^日期範圍最多 62 日$/, 'The date range is limited to 62 days.'],
+  [/^你嘅帳戶（(.+)）已停用/, function(m){ return 'Your account ('+m[1]+') has been disabled. Please contact the office.'; }],
+  [/^呢個 Google 帳戶嘅電郵未驗證$/, 'This Google account\'s email address is not verified.'],
+  [/^搵唔到申請/, 'Request not found. Please refresh.'],
+  [/^請求逾時/, 'The request timed out. Please refresh the page.']
+];
+function trServer(msg){
+  msg = String(msg||'');
+  if(LANG!=='en') return msg;
+  for(var i=0;i<ERR_EN.length;i++){
+    var m = msg.match(ERR_EN[i][0]);
+    if(m) return typeof ERR_EN[i][1]==='function' ? ERR_EN[i][1](m) : ERR_EN[i][1];
+  }
+  return msg;
+}
+function trFlag(f){   // 遲到 / 早走 / 漏打卡 …
+  if(!f || LANG!=='en') return f||'';
+  var map={'遲到':'Late','早走':'Left early','正常':'On time','漏打卡':'Missed clock-in','漏收工':'Missed clock-out'};
+  return String(f).split('、').map(function(x){ return map[x]||x; }).join(', ');
+}
+function trPay(p){
+  if(!p || LANG!=='en') return p||'';
+  var map={'已付':'Paid','⚠️ 未付款':'⚠️ Unpaid','⚠️ 未簽約':'⚠️ Contract not signed','⚠️ 冇付款紀錄':'⚠️ No payment record'};
+  return map[p]||p;
+}
+function trNote(n){
+  if(!n || LANG!=='en') return n||'';
+  var m;
+  if(n==='日曆標咗取消') return 'Marked as cancelled in the calendar';
+  if(n==='日曆已刪除') return 'Deleted from the calendar';
+  if(n==='⚠️ 打卡後日曆已刪除呢更') return '⚠️ Shift was deleted from the calendar after clock-in';
+  if((m=n.match(/^⚠️ 認唔到 worker：「(.*)」$/))) return '⚠️ Worker not recognised: "'+m[1]+'"';
+  if(/^（用名配對 worker/.test(n)) return '(Worker matched by name — their email is not on the event)';
+  if((m=n.match(/^⚠️ 打卡後日曆有改動（而家日曆：(.*)）$/))) return '⚠️ Calendar changed after clock-in (calendar now: '+m[1].replace('已取消','cancelled')+')';
+  return n;
+}
+function stateLabel(s){
+  var late = s.state==='open' && String(s.label||'').indexOf('遲到')>=0;
+  switch(s.state){
+    case 'upcoming': return s.date===S.today ? T('即將開始','Starting soon') : T('未開始','Not started');
+    case 'open': return late ? T('遲到未打卡','Late – not clocked in') : T('可以打卡','Ready to clock in');
+    case 'working': return T('工作中','In progress');
+    case 'done': return T('已完成','Completed');
+    case 'missed': return T('漏打卡','Missed clock-in');
+    case 'missedOut': return T('漏收工','Missed clock-out');
+    case 'cancelled': return T('已取消','Cancelled');
+    case 'invalid': return T('資料不全','Incomplete');
+  }
+  return s.label||'';
+}
+function extraStatus(st){
+  return ({Pending:[T('待審批','Pending'),'amber'],Approved:[T('已批准','Approved'),'green'],Rejected:[T('已拒絕','Rejected'),'red']})[st]||[st,''];
+}
+function minText(n){ return n+T(' 分鐘',' min'); }
+
 function tokenExp(t){
   try{ var p=t.split('.')[1].replace(/-/g,'+').replace(/_/g,'/'); while(p.length%4) p+='=';
        return JSON.parse(decodeURIComponent(escape(atob(p)))).exp*1000; }catch(e){ return 0; }
@@ -140,19 +230,19 @@ function getToken(){ var t=load(TOKEN_KEY); return (t && tokenExp(t) > Date.now(
 
 function call(action, payload){
   var tok=getToken();
-  if(!tok){ showLogin('登入已過期，請再登入一次'); return Promise.reject(new Error('請重新登入')); }
+  if(!tok){ showLogin(T('登入已過期，請再登入一次','Your sign-in has expired. Please sign in again.')); return Promise.reject(new Error('RELOGIN')); }
   return fetch(API_URL, {
     method:'POST', redirect:'follow',
     headers:{'Content-Type':'text/plain;charset=utf-8'},          // 簡單請求，唔使 CORS preflight
     body: JSON.stringify({ idToken: tok, action: action, payload: payload||{} })
   }).then(function(r){ return r.text(); }).then(function(txt){
-    var out; try{ out=JSON.parse(txt); }catch(e){ throw new Error('伺服器回應錯誤，請稍後再試'); }
+    var out; try{ out=JSON.parse(txt); }catch(e){ throw new Error(T('伺服器回應錯誤，請稍後再試','Server error. Please try again later.')); }
     if(!out.ok){
-      if(/^TOKEN_/.test(out.error)){ store(TOKEN_KEY,null); showLogin('登入已過期，請再登入一次'); }
+      if(/^TOKEN_/.test(out.error)){ store(TOKEN_KEY,null); showLogin(T('登入已過期，請再登入一次','Your sign-in has expired. Please sign in again.')); throw new Error('RELOGIN'); }
       throw new Error(out.error);
     }
     return out.data;
-  }, function(){ throw new Error('網絡連線失敗，請檢查網絡再試'); });
+  }, function(){ throw new Error(T('網絡連線失敗，請檢查網絡再試','Network error. Please check your connection and try again.')); });
 }
 
 /* ---------------- Google 登入 ---------------- */
@@ -166,7 +256,7 @@ function initGis(cb){
         cancel_on_tap_outside: false, use_fedcm_for_prompt: true });
       gisReady=true; cb();
     } else if(++tries < 100) setTimeout(wait, 100);
-    else document.getElementById('gbtn').innerHTML='<div class="muted small">載入唔到 Google 登入，請檢查網絡後重新整理。</div>';
+    else document.getElementById('gbtn').innerHTML='<div class="muted small">'+T('載入唔到 Google 登入，請檢查網絡後重新整理。','Could not load Google sign-in. Please check your connection and refresh.')+'</div>';
   })();
 }
 function onCredential(resp){
@@ -180,16 +270,16 @@ function brandHtml(){
 function showLogin(note){
   if(timer){ clearInterval(timer); timer=null; }
   document.getElementById('layer').innerHTML='';
-  document.getElementById('app').innerHTML='<div class="center"><div style="max-width:340px;width:100%">'+brandHtml()+
-    '<div style="font-size:20px;font-weight:700;margin-bottom:6px">員工登入</div>'+
-    '<div class="muted small" style="margin-bottom:18px">請使用你登記咗嘅 Google 帳戶（Gmail）登入</div>'+
+  document.getElementById('app').innerHTML='<div class="toplang">'+langBtn()+'</div><div class="center"><div style="max-width:340px;width:100%">'+brandHtml()+
+    '<div style="font-size:20px;font-weight:700;margin-bottom:6px">'+T('員工登入','Staff Sign-in')+'</div>'+
+    '<div class="muted small" style="margin-bottom:18px">'+T('請使用你登記咗嘅 Google 帳戶（Gmail）登入','Please sign in with your registered Google account (Gmail)')+'</div>'+
     (note?'<div class="small" style="color:var(--red);margin-bottom:12px">'+esc(note)+'</div>':'')+
     '<div id="gbtn" style="display:flex;justify-content:center;min-height:44px"></div>'+
-    '<div class="muted small" style="margin-top:22px">只允許已登記嘅員工帳戶</div>'+
-    '<div class="small" style="margin-top:28px"><a href="privacy.html">Privacy Policy / 私隱政策</a></div></div></div>';
+    '<div class="muted small" style="margin-top:22px">'+T('只允許已登記嘅員工帳戶','Only registered staff accounts can sign in')+'</div>'+
+    '<div class="small" style="margin-top:28px"><a href="privacy.html">'+T('私隱政策','Privacy Policy')+'</a></div></div></div>';
   initGis(function(){
     google.accounts.id.renderButton(document.getElementById('gbtn'),
-      { theme:'outline', size:'large', shape:'pill', text:'signin_with', locale:'zh-TW', width:280 });
+      { theme:'outline', size:'large', shape:'pill', text:'signin_with', locale: LANG==='en'?'en':'zh-TW', width:280 });
     google.accounts.id.prompt();
   });
 }
@@ -199,21 +289,31 @@ function signOut(){
   if(window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
   showLogin('');
 }
+
+/* ---------------- 日期 / 時間 ---------------- */
 var WD = ['日','一','二','三','四','五','六'];
+var WD_EN = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+var MON_EN = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 function dParts(k){ var p=k.split('-'); return new Date(+p[0], +p[1]-1, +p[2]); }
-function dLong(k){ if(!k) return ''; var d=dParts(k); return d.getFullYear()+'年'+(d.getMonth()+1)+'月'+d.getDate()+'日 (星期'+WD[d.getDay()]+')'; }
-function dShort(k){ if(!k) return ''; var d=dParts(k); return (d.getMonth()+1)+'月'+d.getDate()+'日 (星期'+WD[d.getDay()]+')'; }
+function dLong(k){ if(!k) return ''; var d=dParts(k);
+  return LANG==='en' ? WD_EN[d.getDay()]+', '+MON_EN[d.getMonth()]+' '+d.getDate()+', '+d.getFullYear()
+                     : d.getFullYear()+'年'+(d.getMonth()+1)+'月'+d.getDate()+'日 (星期'+WD[d.getDay()]+')'; }
+function dShort(k){ if(!k) return ''; var d=dParts(k);
+  return LANG==='en' ? WD_EN[d.getDay()]+', '+MON_EN[d.getMonth()]+' '+d.getDate()
+                     : (d.getMonth()+1)+'月'+d.getDate()+'日 (星期'+WD[d.getDay()]+')'; }
 function t12(hm){ if(!hm) return '—'; var p=hm.split(':'), h=+p[0]; return ((h%12)||12)+':'+p[1]+' '+(h<12?'AM':'PM'); }
-function hrsText(h){ if(h==null||h==='' ||isNaN(h)) return '—'; var m=Math.round(Number(h)*60); return Math.floor(m/60)+' 小時 '+(m%60)+' 分鐘'; }
-function elapsed(ms){ var m=Math.max(0,Math.floor((Date.now()-ms)/60000)); return Math.floor(m/60)+' 小時 '+(m%60)+' 分鐘'; }
+function hmText(m){ return LANG==='en' ? Math.floor(m/60)+' h '+(m%60)+' min' : Math.floor(m/60)+' 小時 '+(m%60)+' 分鐘'; }
+function hrsText(h){ if(h==null||h==='' ||isNaN(h)) return '—'; return hmText(Math.round(Number(h)*60)); }
+function elapsed(ms){ return hmText(Math.max(0,Math.floor((Date.now()-ms)/60000))); }
 function addDaysK(k,n){ var d=dParts(k); d.setDate(d.getDate()+n); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }
-function payChip(s){ return s.payment ? '<span class="chip '+(s.payment.indexOf('⚠️')>=0?'amber':'green')+'">'+esc(s.payment)+'</span>' : '<span class="muted small">—</span>'; }
-function noteOf(s){ return s.syncNote ? '<div class="small" style="margin-top:4px;color:'+(s.syncNote.indexOf('⚠️')>=0?'#9a6b00':'var(--gray)')+';white-space:normal;max-width:260px">'+esc(s.syncNote)+'</div>' : ''; }
+
+function payChip(s){ return s.payment ? '<span class="chip '+(s.payment.indexOf('⚠️')>=0?'amber':'green')+'">'+esc(trPay(s.payment))+'</span>' : '<span class="muted small">—</span>'; }
+function noteOf(s){ return s.syncNote ? '<div class="small" style="margin-top:4px;color:'+(s.syncNote.indexOf('⚠️')>=0?'#9a6b00':'var(--gray)')+';white-space:normal;max-width:260px">'+esc(trNote(s.syncNote))+'</div>' : ''; }
 function chipFor(s){
   var c={upcoming:'',open:'blue',working:'green',done:'green',missed:'red',missedOut:'red',cancelled:'',invalid:'amber'}[s.state]||'';
-  if(s.state==='open' && s.label.indexOf('遲到')>=0) c='amber';
-  var h='<span class="chip '+c+'">'+esc(s.label)+'</span>';
-  if(s.flag) h+=' <span class="chip amber">'+esc(s.flag)+'</span>';
+  if(s.state==='open' && String(s.label||'').indexOf('遲到')>=0) c='amber';
+  var h='<span class="chip '+c+'">'+esc(stateLabel(s))+'</span>';
+  if(s.flag) h+=' <span class="chip amber">'+esc(trFlag(s.flag))+'</span>';
   return h;
 }
 function toast(msg, err){
@@ -225,7 +325,7 @@ function confirmBox(title, text, okText, okClass){
   return new Promise(function(res){
     var L=document.getElementById('layer');
     L.innerHTML='<div class="modal"><div class="box"><h3>'+esc(title)+'</h3><div class="muted">'+text+'</div>'+
-      '<div class="acts"><button id="mNo" style="background:#eef1f5">取消</button><button id="mOk" style="color:#fff;background:var(--'+(okClass||'blue')+')">'+esc(okText||'確定')+'</button></div></div></div>';
+      '<div class="acts"><button id="mNo" style="background:#eef1f5">'+T('取消','Cancel')+'</button><button id="mOk" style="color:#fff;background:var(--'+(okClass||'blue')+')">'+esc(okText||T('確定','OK'))+'</button></div></div></div>';
     document.getElementById('mNo').onclick=function(){ L.innerHTML=''; res(false); };
     document.getElementById('mOk').onclick=function(){ L.innerHTML=''; res(true); };
   });
@@ -238,22 +338,23 @@ function getLoc(){
       function(){ if(done) return; done=true; clearTimeout(t); res({}); }, {enableHighAccuracy:true, timeout:7000, maximumAge:60000});
   });
 }
-function fail(e){ busy(false); toast((e&&e.message)||String(e), true); }
+function fail(e){ busy(false); var m=(e&&e.message)||String(e); if(m==='RELOGIN') return; toast(trServer(m), true); }
 
 /* ---------------- 版面 ---------------- */
 function page(o){
   if(timer){ clearInterval(timer); timer=null; }
-  var tabs=[['home','首頁',IC.home],['schedule','工作安排',IC.cal],['records','紀錄',IC.rec],['profile','個人資料',IC.user]];
-  if(S.canView) tabs.push(['admin','管理',IC.admin]);
+  var tabs=[['home',T('首頁','Home'),IC.home],['schedule',T('工作安排','Schedule'),IC.cal],['records',T('紀錄','Records'),IC.rec],['profile',T('個人資料','Profile'),IC.user]];
+  if(S.canView) tabs.push(['admin',T('管理','Admin'),IC.admin]);
   var head = o.back
     ? '<header class="top"><button class="iconbtn" onclick="'+o.back+'">'+IC.back+'</button><h1>'+esc(o.title)+'</h1><span style="width:36px"></span></header>'
-    : '<header class="top"><button class="iconbtn" onclick="reload()" title="重新整理">'+IC.refresh+'</button><h1 class="brand">Warm Hands</h1><div class="avatar" onclick="go(\'profile\')" style="cursor:pointer">'+esc((S.me.name||'?').trim().charAt(0).toUpperCase())+'</div></header>';
+    : '<header class="top"><button class="iconbtn" onclick="reload()" title="'+T('重新整理','Refresh')+'">'+IC.refresh+'</button><h1 class="brand">Warm Hands</h1>'+langBtn()+
+      '<div class="avatar" onclick="go(\'profile\')" style="cursor:pointer">'+esc((S.me.name||'?').trim().charAt(0).toUpperCase())+'</div></header>';
   var nav = o.back ? '' : '<nav class="tabs"><div class="in2">'+tabs.map(function(t){
       return '<button class="'+(S.tab===t[0]?'on':'')+'" onclick="go(\''+t[0]+'\')">'+t[2]+'<span>'+t[1]+'</span></button>'; }).join('')+'</div></nav>';
   document.getElementById('app').innerHTML='<div class="wrap'+(o.wide?' wide':'')+'">'+head+'<main>'+o.body+'</main></div>'+nav;
   window.scrollTo(0,0);
 }
-function loading(title){ page({title:title||'', body:'<div class="center" style="min-height:50vh"><div><div class="spin"></div><div class="muted">載入中…</div></div></div>'}); }
+function loading(title){ page({title:title||'', body:'<div class="center" style="min-height:50vh"><div><div class="spin"></div><div class="muted">'+T('載入中…','Loading…')+'</div></div></div>'}); }
 
 function go(tab){ S.tab=tab; S.detail=null; render(); }
 function reload(){ S.schedule=null; S.records=null; S.extras=null; S.admin.data=null; S.admin.extraList=null; render(); }
@@ -282,11 +383,11 @@ function loadSchedule(){ return call('myShifts',{view:'schedule'}).then(function
 function renderHome(){
   if(!S.schedule){ loading(); return loadSchedule().then(renderHome).catch(fail); }
   var list=S.schedule.shifts.filter(function(s){ return s.date===S.today || s.state==='working'; });
-  var body='<div class="hello">你好，'+esc(S.me.name)+'</div><div class="muted">'+dLong(S.today)+'</div>'+
-    '<div class="sec"><h2>今日工作安排</h2><span class="muted small">共 '+list.length+' 個</span></div>'+
-    (list.length? list.map(function(s){return shiftCard(s,false);}).join('') : '<div class="card empty">今日冇排更 🎉</div>');
+  var body='<div class="hello">'+T('你好，','Hello, ')+esc(S.me.name)+'</div><div class="muted">'+dLong(S.today)+'</div>'+
+    '<div class="sec"><h2>'+T('今日工作安排','Today\'s shifts')+'</h2><span class="muted small">'+T('共 '+list.length+' 個',list.length+' total')+'</span></div>'+
+    (list.length? list.map(function(s){return shiftCard(s,false);}).join('') : '<div class="card empty">'+T('今日冇排更 🎉','No shifts today 🎉')+'</div>');
   var next=S.schedule.shifts.filter(function(s){ return s.date>S.today; })[0];
-  if(next) body+='<div class="sec"><h2>下一更</h2></div>'+shiftCard(next,true);
+  if(next) body+='<div class="sec"><h2>'+T('下一更','Next shift')+'</h2></div>'+shiftCard(next,true);
   page({body:body});
 }
 
@@ -295,9 +396,10 @@ function renderSchedule(){
   if(!S.schedule){ loading(); return loadSchedule().then(renderSchedule).catch(fail); }
   var by={}, keys=[];
   S.schedule.shifts.forEach(function(s){ if(!by[s.date]){by[s.date]=[];keys.push(s.date);} by[s.date].push(s); });
-  var body='<div class="sec" style="margin-top:4px"><h2>未來工作安排</h2><span class="muted small">共 '+S.schedule.shifts.length+' 更</span></div>';
-  body+= keys.length ? keys.map(function(k){ return '<div class="day">'+(k===S.today?'今日・':'')+dShort(k)+'</div>'+by[k].map(function(s){return shiftCard(s,false);}).join(''); }).join('')
-    : '<div class="card empty">暫時冇排更</div>';
+  var n=S.schedule.shifts.length;
+  var body='<div class="sec" style="margin-top:4px"><h2>'+T('未來工作安排','Upcoming shifts')+'</h2><span class="muted small">'+T('共 '+n+' 更',n+' shifts')+'</span></div>';
+  body+= keys.length ? keys.map(function(k){ return '<div class="day">'+(k===S.today?T('今日・','Today · '):'')+dShort(k)+'</div>'+by[k].map(function(s){return shiftCard(s,false);}).join(''); }).join('')
+    : '<div class="card empty">'+T('暫時冇排更','No upcoming shifts')+'</div>';
   page({body:body});
 }
 
@@ -306,33 +408,33 @@ function renderRecords(){
   if(!S.records){ loading(); return call('myShifts',{view:'records'}).then(function(d){ S.records=d; renderRecords(); }).catch(fail); }
   var l=S.records.shifts, tot=0;
   l.forEach(function(s){ if(s.actualHrs) tot+=Number(s.actualHrs); });
-  var body='<div class="stats"><div class="stat"><span class="muted small">更數</span><b>'+l.length+'</b></div>'+
-    '<div class="stat"><span class="muted small">實際工時</span><b>'+(Math.round(tot*100)/100)+' 小時</b></div></div>';
+  var body='<div class="stats"><div class="stat"><span class="muted small">'+T('更數','Shifts')+'</span><b>'+l.length+'</b></div>'+
+    '<div class="stat"><span class="muted small">'+T('實際工時','Hours worked')+'</span><b>'+(Math.round(tot*100)/100)+T(' 小時',' h')+'</b></div></div>';
   body+= l.length ? l.map(function(s){
     return '<button class="card shift" onclick="openShift(\''+esc(s.id)+'\',\'records\')"><div style="flex:1">'+
       '<div style="display:flex;justify-content:space-between;gap:8px"><span class="name">'+esc(s.client)+'</span><span>'+chipFor(s)+'</span></div>'+
-      '<div class="muted small" style="margin-top:4px">'+dShort(s.date)+'｜預定 '+t12(s.start)+' – '+t12(s.end)+'</div>'+
-      '<div class="small" style="margin-top:6px">實際 '+(s.clockIn?t12(s.clockIn):'—')+' – '+(s.clockOut?t12(s.clockOut):'—')+
-      (s.actualHrs?'｜<b>'+s.actualHrs+' 小時</b>':'')+(s.extraMin?'｜額外 '+s.extraMin+' 分鐘':'')+'</div></div></button>';
-  }).join('') : '<div class="card empty">過去 31 日冇紀錄</div>';
+      '<div class="muted small" style="margin-top:4px">'+dShort(s.date)+'｜'+T('預定 ','Scheduled ')+t12(s.start)+' – '+t12(s.end)+'</div>'+
+      '<div class="small" style="margin-top:6px">'+T('實際 ','Actual ')+(s.clockIn?t12(s.clockIn):'—')+' – '+(s.clockOut?t12(s.clockOut):'—')+
+      (s.actualHrs?'｜<b>'+s.actualHrs+T(' 小時',' h')+'</b>':'')+(s.extraMin?'｜'+T('額外 ','Extra ')+minText(s.extraMin):'')+'</div></div></button>';
+  }).join('') : '<div class="card empty">'+T('過去 31 日冇紀錄','No records in the past 31 days')+'</div>';
   page({body:body});
 }
 
 /* ---------------- 個人資料 ---------------- */
 function renderProfile(){
   if(!S.extras){ loading(); return call('myExtra',{}).then(function(d){ S.extras=d; renderProfile(); }).catch(fail); }
-  var stMap={Pending:['待審批','amber'],Approved:['已批准','green'],Rejected:['已拒絕','red']};
-  var body='<div class="card"><div class="kv"><span class="muted">姓名</span><b>'+esc(S.me.name)+'</b></div>'+
-    '<div class="kv"><span class="muted">員工編號</span><b>'+esc(S.me.staffId)+'</b></div>'+
-    '<div class="kv"><span class="muted">登入帳戶</span><b>'+esc(S.me.email)+'</b></div>'+
-    '<div class="kv"><span class="muted">身分</span><b>'+esc(S.me.role)+'</b></div></div>'+
-    '<div class="sec"><h2>我嘅額外時間申請</h2></div>';
-  body+= S.extras.length ? S.extras.map(function(e){ var st=stMap[e.status]||[e.status,''];
+  var body='<div class="card"><div class="kv"><span class="muted">'+T('姓名','Name')+'</span><b>'+esc(S.me.name)+'</b></div>'+
+    '<div class="kv"><span class="muted">'+T('員工編號','Staff ID')+'</span><b>'+esc(S.me.staffId)+'</b></div>'+
+    '<div class="kv"><span class="muted">'+T('登入帳戶','Signed in as')+'</span><b>'+esc(S.me.email)+'</b></div>'+
+    '<div class="kv"><span class="muted">'+T('身分','Role')+'</span><b>'+esc(S.me.role)+'</b></div>'+
+    '<div class="kv"><span class="muted">'+T('語言','Language')+'</span><b>'+langBtn()+'</b></div></div>'+
+    '<div class="sec"><h2>'+T('我嘅額外時間申請','My extra-time requests')+'</h2></div>';
+  body+= S.extras.length ? S.extras.map(function(e){ var st=extraStatus(e.status);
     return '<div class="card"><div style="display:flex;justify-content:space-between"><b>'+esc(e.client)+'</b><span class="chip '+st[1]+'">'+st[0]+'</span></div>'+
-      '<div class="muted small" style="margin-top:4px">'+dShort(e.date)+'｜'+e.minutes+' 分鐘</div><div class="small" style="margin-top:6px">'+esc(e.reason)+'</div>'+
-      (e.reviewNote?'<div class="small muted" style="margin-top:6px">審批備註：'+esc(e.reviewNote)+'</div>':'')+'</div>'; }).join('')
-    : '<div class="card empty">未有申請</div>';
-  body+='<div style="height:14px"></div><button class="btn ghost" onclick="signOut()">登出 / 轉用其他帳戶</button>';
+      '<div class="muted small" style="margin-top:4px">'+dShort(e.date)+'｜'+minText(e.minutes)+'</div><div class="small" style="margin-top:6px">'+esc(e.reason)+'</div>'+
+      (e.reviewNote?'<div class="small muted" style="margin-top:6px">'+T('審批備註：','Review note: ')+esc(e.reviewNote)+'</div>':'')+'</div>'; }).join('')
+    : '<div class="card empty">'+T('未有申請','No requests yet')+'</div>';
+  body+='<div style="height:14px"></div><button class="btn ghost" onclick="signOut()">'+T('登出 / 轉用其他帳戶','Sign out / Switch account')+'</button>';
   page({body:body});
 }
 
@@ -351,23 +453,23 @@ function replaceShift(v){
 
 function renderDetail(){
   var s=findShift(S.detail); if(!s){ S.detail=null; return render(); }
-  var title={working:'工作進行中',done:'完成工作'}[s.state]||'工作詳情';
+  var title={working:T('工作進行中','Shift in progress'),done:T('完成工作','Shift completed')}[s.state]||T('工作詳情','Shift details');
   var map='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(s.address||'');
   var body='<div class="card"><div class="row"><div class="ri">'+IC.pin+'</div><div><div class="name" style="font-weight:700;font-size:18px">'+esc(s.client)+'</div>'+
     (s.address?'<a class="small" href="'+map+'" target="_blank" rel="noopener">'+esc(s.address)+'</a>':'')+'</div></div>';
 
   if(s.state==='working'){
-    body+='<div class="row" style="background:var(--green-l);margin:8px -16px;padding:14px 16px"><div class="ri" style="color:var(--green)">'+IC.clock+'</div><div><div class="muted small">開始時間</div><div class="big">'+t12(s.clockIn)+'</div><div class="muted small">(已打卡)</div></div></div>'+
-      '<div class="row"><div class="ri">'+IC.cal+'</div><div><div class="muted small">預定結束時間</div><div style="font-size:18px;font-weight:600">'+t12(s.end)+'</div></div></div>'+
-      '<div class="row"><div class="ri">'+IC.clock+'</div><div><div class="muted small">已工作時間</div><div style="font-size:18px;font-weight:600" id="elapsed">'+elapsed(s.clockInMs)+'</div></div></div></div>';
+    body+='<div class="row" style="background:var(--green-l);margin:8px -16px;padding:14px 16px"><div class="ri" style="color:var(--green)">'+IC.clock+'</div><div><div class="muted small">'+T('開始時間','Started at')+'</div><div class="big">'+t12(s.clockIn)+'</div><div class="muted small">'+T('(已打卡)','(Clocked in)')+'</div></div></div>'+
+      '<div class="row"><div class="ri">'+IC.cal+'</div><div><div class="muted small">'+T('預定結束時間','Scheduled end')+'</div><div style="font-size:18px;font-weight:600">'+t12(s.end)+'</div></div></div>'+
+      '<div class="row"><div class="ri">'+IC.clock+'</div><div><div class="muted small">'+T('已工作時間','Time worked')+'</div><div style="font-size:18px;font-weight:600" id="elapsed">'+elapsed(s.clockInMs)+'</div></div></div></div>';
   } else if(s.state==='done'){
-    body+='</div><div class="okbox"><div class="tick">'+IC.tick+'</div><div style="font-size:18px;font-weight:700">已完成打卡</div><div class="muted">結束時間：'+t12(s.clockOut)+'</div>'+
-      (s.flag?'<div style="margin-top:8px"><span class="chip amber">'+esc(s.flag)+'</span></div>':'')+'</div>'+
-      '<div class="card" style="margin-top:12px"><div class="kv"><span class="muted">日期</span><b>'+dShort(s.date)+'</b></div>'+
-      '<div class="kv"><span class="muted">預定時間</span><b>'+t12(s.start)+' – '+t12(s.end)+'</b></div>'+
-      '<div class="kv"><span class="muted">實際時間</span><b>'+t12(s.clockIn)+' – '+t12(s.clockOut)+'</b></div>'+
-      '<div class="kv"><span class="muted">總工作時數</span><b>'+hrsText(s.actualHrs)+'</b></div>'+
-      (s.extraMin?'<div class="kv"><span class="muted">已批額外時間</span><b>'+s.extraMin+' 分鐘</b></div>':'')+'</div>';
+    body+='</div><div class="okbox"><div class="tick">'+IC.tick+'</div><div style="font-size:18px;font-weight:700">'+T('已完成打卡','Clocked out')+'</div><div class="muted">'+T('結束時間：','Finished at: ')+t12(s.clockOut)+'</div>'+
+      (s.flag?'<div style="margin-top:8px"><span class="chip amber">'+esc(trFlag(s.flag))+'</span></div>':'')+'</div>'+
+      '<div class="card" style="margin-top:12px"><div class="kv"><span class="muted">'+T('日期','Date')+'</span><b>'+dShort(s.date)+'</b></div>'+
+      '<div class="kv"><span class="muted">'+T('預定時間','Scheduled')+'</span><b>'+t12(s.start)+' – '+t12(s.end)+'</b></div>'+
+      '<div class="kv"><span class="muted">'+T('實際時間','Actual')+'</span><b>'+t12(s.clockIn)+' – '+t12(s.clockOut)+'</b></div>'+
+      '<div class="kv"><span class="muted">'+T('總工作時數','Total hours')+'</span><b>'+hrsText(s.actualHrs)+'</b></div>'+
+      (s.extraMin?'<div class="kv"><span class="muted">'+T('已批額外時間','Approved extra time')+'</span><b>'+minText(s.extraMin)+'</b></div>':'')+'</div>';
   } else {
     body+='<div class="row"><div class="ri">'+IC.cal+'</div><div style="font-weight:600">'+dLong(s.date)+'</div></div>'+
       '<div class="row"><div class="ri">'+IC.clock+'</div><div style="font-weight:600">'+t12(s.start)+' – '+t12(s.end)+'</div></div>'+
@@ -375,69 +477,72 @@ function renderDetail(){
   }
 
   if(s.canClockIn){
-    body+='<button class="btn green" onclick="doClockIn()">'+IC.play+'<span>Clock In<small>開始工作</small></span></button>'+
-      '<div class="hint" style="margin-top:12px">請在到達客戶住所後按打卡<br>系統會自動記錄時間</div>';
+    body+='<button class="btn green" onclick="doClockIn()">'+IC.play+'<span>Clock In<small>'+T('開始工作','Start shift')+'</small></span></button>'+
+      '<div class="hint" style="margin-top:12px">'+T('請在到達客戶住所後按打卡<br>系統會自動記錄時間','Please clock in after you arrive at the client\'s home.<br>The time is recorded automatically.')+'</div>';
   } else if(s.state==='upcoming'){
-    body+='<button class="btn green" disabled>'+IC.play+'<span>Clock In<small>開始工作</small></span></button>'+
-      '<div class="hint" style="margin-top:12px">'+(s.date===S.today?'今日 '+t12(s.earliestClockIn)+' 起可以打卡':'只可以喺 '+dShort(s.date)+' 當日打卡')+'</div>';
+    body+='<button class="btn green" disabled>'+IC.play+'<span>Clock In<small>'+T('開始工作','Start shift')+'</small></span></button>'+
+      '<div class="hint" style="margin-top:12px">'+(s.date===S.today
+        ? T('今日 '+t12(s.earliestClockIn)+' 起可以打卡','You can clock in from '+t12(s.earliestClockIn)+' today')
+        : T('只可以喺 '+dShort(s.date)+' 當日打卡','You can only clock in on '+dShort(s.date)))+'</div>';
   } else if(s.state==='missed'){
-    body+='<div class="hint">呢更冇開工打卡紀錄，如有出勤請聯絡 Coordinator 補登</div>';
+    body+='<div class="hint">'+T('呢更冇開工打卡紀錄，如有出勤請聯絡 Coordinator 補登','No clock-in was recorded for this shift. If you worked it, please contact your coordinator.')+'</div>';
   } else if(s.state==='missedOut'){
-    body+='<div class="hint">已過收工打卡時限，請聯絡 Coordinator 補登收工時間</div>';
+    body+='<div class="hint">'+T('已過收工打卡時限，請聯絡 Coordinator 補登收工時間','The clock-out time limit has passed. Please ask your coordinator to record your finish time.')+'</div>';
   }
   if(s.canClockOut){
-    body+='<div style="height:4px"></div><button class="btn red" onclick="doClockOut()">'+IC.stop+'<span>Clock Out<small>結束工作</small></span></button>';
+    body+='<div style="height:4px"></div><button class="btn red" onclick="doClockOut()">'+IC.stop+'<span>Clock Out<small>'+T('結束工作','End shift')+'</small></span></button>';
   }
   if(s.canExtra){
-    body+='<div style="height:12px"></div><button class="btn ghost" onclick="openExtra()">'+IC.plus+' 申請額外時間</button>';
+    body+='<div style="height:12px"></div><button class="btn ghost" onclick="openExtra()">'+IC.plus+' '+T('申請額外時間','Request extra time')+'</button>';
   }
   if(s.extras && s.extras.length){
-    var stMap={Pending:['待審批','amber'],Approved:['已批准','green'],Rejected:['已拒絕','red']};
-    body+='<div class="sec"><h2>額外時間申請</h2></div>'+s.extras.map(function(e){ var st=stMap[e.status]||[e.status,''];
-      return '<div class="card"><div style="display:flex;justify-content:space-between"><b>'+e.minutes+' 分鐘</b><span class="chip '+st[1]+'">'+st[0]+'</span></div><div class="small muted" style="margin-top:4px">'+esc(e.reason)+'</div></div>'; }).join('');
+    body+='<div class="sec"><h2>'+T('額外時間申請','Extra-time requests')+'</h2></div>'+s.extras.map(function(e){ var st=extraStatus(e.status);
+      return '<div class="card"><div style="display:flex;justify-content:space-between"><b>'+minText(e.minutes)+'</b><span class="chip '+st[1]+'">'+st[0]+'</span></div><div class="small muted" style="margin-top:4px">'+esc(e.reason)+'</div></div>'; }).join('');
   }
-  if(s.state==='done'){ body+='<div style="height:12px"></div><button class="btn" onclick="S.tab=\'home\';closeDetail()">返回首頁</button>'; }
+  if(s.state==='done'){ body+='<div style="height:12px"></div><button class="btn" onclick="S.tab=\'home\';closeDetail()">'+T('返回首頁','Back to Home')+'</button>'; }
   page({title:title, back:'closeDetail()', body:body});
   if(s.state==='working'){ timer=setInterval(function(){ var el=document.getElementById('elapsed'); if(el) el.textContent=elapsed(s.clockInMs); }, 30000); }
 }
 
 function doClockIn(){
   var s=findShift(S.detail);
-  confirmBox('開始工作？', esc(s.client)+'<br>預定 '+t12(s.start)+' – '+t12(s.end), 'Clock In', 'green').then(function(ok){
+  confirmBox(T('開始工作？','Start this shift?'), esc(s.client)+'<br>'+T('預定 ','Scheduled ')+t12(s.start)+' – '+t12(s.end), 'Clock In', 'green').then(function(ok){
     if(!ok) return; busy(true);
     getLoc().then(function(loc){ loc.shiftId=s.id; return call('clockIn', loc); })
-      .then(function(v){ busy(false); replaceShift(v); toast('已打卡 '+t12(v.clockIn)); renderDetail(); }).catch(fail);
+      .then(function(v){ busy(false); replaceShift(v); toast(T('已打卡 ','Clocked in at ')+t12(v.clockIn)); renderDetail(); }).catch(fail);
   });
 }
 function doClockOut(){
   var s=findShift(S.detail);
   var now=new Date(), early = s.endMs && now.getTime() < s.endMs - 10*60000;
-  confirmBox('結束工作？', early?'<b style="color:var(--red)">未到預定收工時間（'+t12(s.end)+'）</b><br>確定要提早收工？':'已工作 '+elapsed(s.clockInMs), 'Clock Out', 'red').then(function(ok){
+  confirmBox(T('結束工作？','End this shift?'),
+    early ? '<b style="color:var(--red)">'+T('未到預定收工時間（'+t12(s.end)+'）','Your scheduled end time is '+t12(s.end))+'</b><br>'+T('確定要提早收工？','Are you sure you want to finish early?')
+          : T('已工作 ','Time worked: ')+elapsed(s.clockInMs), 'Clock Out', 'red').then(function(ok){
     if(!ok) return; busy(true);
     getLoc().then(function(loc){ loc.shiftId=s.id; return call('clockOut', loc); })
-      .then(function(v){ busy(false); replaceShift(v); toast('已收工打卡 '+t12(v.clockOut)); S.records=null; renderDetail(); }).catch(fail);
+      .then(function(v){ busy(false); replaceShift(v); toast(T('已收工打卡 ','Clocked out at ')+t12(v.clockOut)); S.records=null; renderDetail(); }).catch(fail);
   });
 }
 
 /* ---------------- 申請額外時間 ---------------- */
 function openExtra(){
   var s=findShift(S.detail);
-  var opts=[15,30,45,60,90,120,180].map(function(m){ return '<option value="'+m+'">'+(m<60?m+' 分鐘':(m/60)+' 小時')+'</option>'; }).join('');
-  var body='<label class="f" style="margin-top:0">客戶</label><div class="in" style="background:#f6f8fb">'+esc(s.client)+'（'+dShort(s.date)+'）</div>'+
-    '<label class="f">額外時間</label><select id="exMin" class="in">'+opts+'</select>'+
-    '<label class="f">原因</label><textarea id="exReason" class="in" placeholder="例如：客戶需要額外協助準備餐膳"></textarea>'+
-    '<div style="height:18px"></div><button class="btn" onclick="submitExtra()">提交申請</button>'+
-    '<div class="hint" style="margin-top:12px">提交後由管理員審批，批准後會計入呢更嘅時數</div>';
-  page({title:'申請額外工作時間', back:'renderDetail()', body:body});
+  var opts=[15,30,45,60,90,120,180].map(function(m){ return '<option value="'+m+'">'+(m<60?minText(m):(m/60)+T(' 小時',' h'))+'</option>'; }).join('');
+  var body='<label class="f" style="margin-top:0">'+T('客戶','Client')+'</label><div class="in" style="background:#f6f8fb">'+esc(s.client)+'（'+dShort(s.date)+'）</div>'+
+    '<label class="f">'+T('額外時間','Extra time')+'</label><select id="exMin" class="in">'+opts+'</select>'+
+    '<label class="f">'+T('原因','Reason')+'</label><textarea id="exReason" class="in" placeholder="'+T('例如：客戶需要額外協助準備餐膳','e.g. The client needed extra help preparing a meal')+'"></textarea>'+
+    '<div style="height:18px"></div><button class="btn" onclick="submitExtra()">'+T('提交申請','Submit request')+'</button>'+
+    '<div class="hint" style="margin-top:12px">'+T('提交後由管理員審批，批准後會計入呢更嘅時數','Your request will be reviewed. Once approved, it is added to this shift\'s hours.')+'</div>';
+  page({title:T('申請額外工作時間','Request extra time'), back:'renderDetail()', body:body});
 }
 function submitExtra(){
   var s=findShift(S.detail);
   var min=+document.getElementById('exMin').value, reason=document.getElementById('exReason').value.trim();
-  if(!reason){ toast('請填寫原因', true); return; }
+  if(!reason){ toast(T('請填寫原因','Please enter a reason.'), true); return; }
   busy(true);
   call('requestExtra',{shiftId:s.id, minutes:min, reason:reason}).then(function(r){
     busy(false); s.extras=(s.extras||[]).concat([{id:r.requestId,minutes:min,status:'Pending',reason:reason}]);
-    S.extras=null; toast('已提交，等待審批'); renderDetail();
+    S.extras=null; toast(T('已提交，等待審批','Submitted – waiting for approval')); renderDetail();
   }).catch(fail);
 }
 
@@ -445,37 +550,39 @@ function submitExtra(){
 function renderAdmin(){
   var A=S.admin;
   if(!A.date){ A.date=S.today; A.from=addDaysK(S.today,-6); A.to=S.today; A.sFrom=S.today; A.sTo=addDaysK(S.today,6); }
-  var seg='<div class="seg">'+[['schedule','員工更表'],['records','打卡紀錄'],['extra','額外時間審批']].map(function(x){
+  var seg='<div class="seg">'+[['schedule',T('員工更表','Staff schedule')],['records',T('打卡紀錄','Time records')],['extra',T('額外時間審批','Extra-time approval')]].map(function(x){
     return '<button class="'+(A.sub===x[0]?'on':'')+'" onclick="S.admin.sub=\''+x[0]+'\';S.admin.data=null;renderAdmin()">'+x[1]+'</button>'; }).join('')+'</div>';
   if(A.sub==='extra') return renderAdminExtra(seg);
   var isRec = A.sub==='records';
   var q = isRec ? {from:A.from,to:A.to,staffId:A.staffId} : {from:A.sFrom,to:A.sTo,staffId:A.staffId};
   if(!A.data){ page({wide:true, body:seg+'<div class="center" style="min-height:40vh"><div class="spin"></div></div>'});
     return call('adminShifts',q).then(function(d){ A.data=d; renderAdmin(); }).catch(fail); }
-  var d=A.data;
-  var staffOpts='<option value="">所有員工</option>'+(d.staff||[]).map(function(x){ return '<option value="'+esc(x.staffId)+'"'+(x.staffId===A.staffId?' selected':'')+'>'+esc(x.name||x.staffId)+'</option>'; }).join('');
+  var d=A.data, to=T(' 至 ',' to ');
+  var staffOpts='<option value="">'+T('所有員工','All staff')+'</option>'+(d.staff||[]).map(function(x){ return '<option value="'+esc(x.staffId)+'"'+(x.staffId===A.staffId?' selected':'')+'>'+esc(x.name||x.staffId)+'</option>'; }).join('');
   var filters='<div class="filters">'+(isRec
-      ? '<input type="date" class="in" value="'+A.from+'" onchange="S.admin.from=this.value;S.admin.data=null;renderAdmin()"> 至 <input type="date" class="in" value="'+A.to+'" onchange="S.admin.to=this.value;S.admin.data=null;renderAdmin()">'
-      : '<input type="date" class="in" value="'+A.sFrom+'" onchange="setSRange(this.value,S.admin.sTo)"> 至 <input type="date" class="in" value="'+A.sTo+'" onchange="setSRange(S.admin.sFrom,this.value)">'+
-        '<button class="mini ok" onclick="setSRange(S.today,S.today)">今日</button>'+
-        '<button class="mini ok" onclick="setSRange(S.today,addDaysK(S.today,6))">7 日</button>'+
-        '<button class="mini ok" onclick="setSRange(S.today,addDaysK(S.today,30))">30 日</button>')+
+      ? '<input type="date" class="in" value="'+A.from+'" onchange="S.admin.from=this.value;S.admin.data=null;renderAdmin()">'+to+'<input type="date" class="in" value="'+A.to+'" onchange="S.admin.to=this.value;S.admin.data=null;renderAdmin()">'
+      : '<input type="date" class="in" value="'+A.sFrom+'" onchange="setSRange(this.value,S.admin.sTo)">'+to+'<input type="date" class="in" value="'+A.sTo+'" onchange="setSRange(S.admin.sFrom,this.value)">'+
+        '<button class="mini ok" onclick="setSRange(S.today,S.today)">'+T('今日','Today')+'</button>'+
+        '<button class="mini ok" onclick="setSRange(S.today,addDaysK(S.today,6))">'+T('7 日','7 days')+'</button>'+
+        '<button class="mini ok" onclick="setSRange(S.today,addDaysK(S.today,30))">'+T('30 日','30 days')+'</button>')+
     '<select class="in" onchange="S.admin.staffId=this.value;S.admin.data=null;renderAdmin()">'+staffOpts+'</select>'+
-    '<button class="mini ok" onclick="S.admin.data=null;renderAdmin()">重新整理</button>'+
-    '<button class="mini ok" style="background:var(--blue);color:#fff" onclick="syncNow()">⟳ 立即同步日曆</button>'+
-    (d.lastSync?'<span class="muted small">上次同步：'+agoText(d.lastSync.at)+'</span>':'')+'</div>';
+    '<button class="mini ok" onclick="S.admin.data=null;renderAdmin()">'+T('重新整理','Refresh')+'</button>'+
+    '<button class="mini ok" style="background:var(--blue);color:#fff" onclick="syncNow()">⟳ '+T('立即同步日曆','Sync calendar now')+'</button>'+
+    (d.lastSync?'<span class="muted small">'+T('上次同步：','Last sync: ')+agoText(d.lastSync.at)+'</span>':'')+'</div>';
   var l=d.shifts, cnt={done:0,working:0,missed:0,pending:0}, hrs=0;
   l.forEach(function(s){ if(s.state==='done')cnt.done++; else if(s.state==='working')cnt.working++; else if(s.state==='missed'||s.state==='missedOut')cnt.missed++; else if(s.state!=='cancelled')cnt.pending++; if(s.actualHrs) hrs+=Number(s.actualHrs); });
-  var stats='<div class="stats"><div class="stat"><span class="muted small">總更數</span><b>'+l.length+'</b></div><div class="stat"><span class="muted small">已完成</span><b style="color:var(--green)">'+cnt.done+'</b></div>'+
-    '<div class="stat"><span class="muted small">工作中</span><b style="color:var(--blue)">'+cnt.working+'</b></div><div class="stat"><span class="muted small">漏打卡</span><b style="color:var(--red)">'+cnt.missed+'</b></div>'+
-    (isRec?'<div class="stat"><span class="muted small">實際工時</span><b>'+(Math.round(hrs*100)/100)+'</b></div>':'<div class="stat"><span class="muted small">未開始</span><b>'+cnt.pending+'</b></div>')+'</div>';
+  var stat=function(label,val,color){ return '<div class="stat"><span class="muted small">'+label+'</span><b'+(color?' style="color:var(--'+color+')"':'')+'>'+val+'</b></div>'; };
+  var stats='<div class="stats">'+stat(T('總更數','Total shifts'),l.length)+stat(T('已完成','Completed'),cnt.done,'green')+
+    stat(T('工作中','In progress'),cnt.working,'blue')+stat(T('漏打卡','Missed'),cnt.missed,'red')+
+    (isRec?stat(T('實際工時','Hours worked'),Math.round(hrs*100)/100):stat(T('未開始','Not started'),cnt.pending))+'</div>';
   var rows = l.length ? l.map(function(s){
     return isRec
       ? '<tr><td>'+esc(s.date)+'</td><td>'+esc(s.worker)+'</td><td>'+esc(s.client)+'</td><td>'+t12(s.start)+' – '+t12(s.end)+'</td><td>'+(s.clockIn?t12(s.clockIn):'—')+'</td><td>'+(s.clockOut?t12(s.clockOut):'—')+'</td><td>'+(s.actualHrs!=null?s.actualHrs:'—')+'</td><td>'+(s.extraMin||'')+'</td><td>'+chipFor(s)+noteOf(s)+'</td><td>'+payChip(s)+'</td></tr>'
       : '<tr><td>'+esc(dShort(s.date))+'</td><td>'+esc(s.worker)+'</td><td>'+esc(s.client)+'</td><td class="wr">'+esc(s.address)+'</td><td>'+t12(s.start)+'</td><td>'+t12(s.end)+'</td><td>'+(s.clockIn?t12(s.clockIn):'—')+'</td><td>'+(s.clockOut?t12(s.clockOut):'—')+'</td><td>'+chipFor(s)+noteOf(s)+'</td><td>'+payChip(s)+'</td></tr>';
-  }).join('') : '<tr><td colspan="10" class="empty">冇資料</td></tr>';
-  var head = isRec ? '<th>日期</th><th>員工</th><th>客戶</th><th>預定</th><th>開工</th><th>收工</th><th>時數</th><th>額外(分)</th><th>狀態</th><th>付款</th>'
-                   : '<th>日期</th><th>員工</th><th>客戶</th><th>地址</th><th>開始</th><th>結束</th><th>開工打卡</th><th>收工打卡</th><th>狀態</th><th>付款</th>';
+  }).join('') : '<tr><td colspan="10" class="empty">'+T('冇資料','No data')+'</td></tr>';
+  var th=function(a){ return a.map(function(x){ return '<th>'+x+'</th>'; }).join(''); };
+  var head = isRec ? th([T('日期','Date'),T('員工','Staff'),T('客戶','Client'),T('預定','Scheduled'),T('開工','In'),T('收工','Out'),T('時數','Hours'),T('額外(分)','Extra (min)'),T('狀態','Status'),T('付款','Payment')])
+                   : th([T('日期','Date'),T('員工','Staff'),T('客戶','Client'),T('地址','Address'),T('開始','Start'),T('結束','End'),T('開工打卡','Clock in'),T('收工打卡','Clock out'),T('狀態','Status'),T('付款','Payment')]);
   page({wide:true, body:seg+filters+stats+'<div class="tbl"><table><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div>'});
 }
 
@@ -483,65 +590,68 @@ function renderAdmin(){
 function setSRange(f,t){
   if(!f||!t) return;
   if(t<f){ var x=f; f=t; t=x; }
-  if(addDaysK(f,61) < t){ t=addDaysK(f,61); toast('日期範圍最多 62 日，已調整做 '+t); }
+  if(addDaysK(f,61) < t){ t=addDaysK(f,61); toast(T('日期範圍最多 62 日，已調整做 ','The date range is limited to 62 days. End date set to ')+t); }
   S.admin.sFrom=f; S.admin.sTo=t; S.admin.data=null; renderAdmin();
 }
 
 function renderAdminExtra(seg){
   var A=S.admin;
-  var sub='<div class="filters"><button class="mini '+(A.extraStatus==='Pending'?'ok':'')+'" onclick="S.admin.extraStatus=\'Pending\';S.admin.extraList=null;renderAdmin()">待審批</button>'+
-    '<button class="mini '+(A.extraStatus==='Done'?'ok':'')+'" onclick="S.admin.extraStatus=\'Done\';S.admin.extraList=null;renderAdmin()">已審批（60 日內）</button></div>';
+  var sub='<div class="filters"><button class="mini '+(A.extraStatus==='Pending'?'ok':'')+'" onclick="S.admin.extraStatus=\'Pending\';S.admin.extraList=null;renderAdmin()">'+T('待審批','Pending')+'</button>'+
+    '<button class="mini '+(A.extraStatus==='Done'?'ok':'')+'" onclick="S.admin.extraStatus=\'Done\';S.admin.extraList=null;renderAdmin()">'+T('已審批（60 日內）','Reviewed (last 60 days)')+'</button></div>';
   if(!A.extraList){ page({wide:true, body:seg+sub+'<div class="center" style="min-height:40vh"><div class="spin"></div></div>'});
     return call('adminExtra',{status:A.extraStatus}).then(function(d){ A.extraList=d; renderAdmin(); }).catch(fail); }
-  var stMap={Pending:['待審批','amber'],Approved:['已批准','green'],Rejected:['已拒絕','red']};
-  var rows = A.extraList.length ? A.extraList.map(function(e){ var st=stMap[e.status]||[e.status,''];
-    var act = e.status==='Pending' ? (S.canAdmin ? '<button class="mini ok" onclick="review(\''+esc(e.id)+'\',\'Approved\')">批准</button> <button class="mini no" onclick="review(\''+esc(e.id)+'\',\'Rejected\')">拒絕</button>' : '<span class="muted small">只可檢視</span>')
+  var rows = A.extraList.length ? A.extraList.map(function(e){ var st=extraStatus(e.status);
+    var act = e.status==='Pending' ? (S.canAdmin ? '<button class="mini ok" onclick="review(\''+esc(e.id)+'\',\'Approved\')">'+T('批准','Approve')+'</button> <button class="mini no" onclick="review(\''+esc(e.id)+'\',\'Rejected\')">'+T('拒絕','Reject')+'</button>' : '<span class="muted small">'+T('只可檢視','View only')+'</span>')
       : '<span class="muted small">'+esc(e.reviewedBy)+'</span>';
-    return '<tr><td>'+esc(e.date)+'</td><td>'+esc(e.worker)+'</td><td>'+esc(e.client)+'</td><td>'+e.minutes+' 分鐘</td><td class="wr">'+esc(e.reason)+'</td><td><span class="chip '+st[1]+'">'+st[0]+'</span></td><td>'+act+'</td></tr>';
-  }).join('') : '<tr><td colspan="7" class="empty">冇申請</td></tr>';
-  page({wide:true, body:seg+sub+'<div class="tbl"><table><thead><tr><th>日期</th><th>員工</th><th>客戶</th><th>額外時間</th><th>原因</th><th>狀態</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table></div>'});
+    return '<tr><td>'+esc(e.date)+'</td><td>'+esc(e.worker)+'</td><td>'+esc(e.client)+'</td><td>'+minText(e.minutes)+'</td><td class="wr">'+esc(e.reason)+'</td><td><span class="chip '+st[1]+'">'+st[0]+'</span></td><td>'+act+'</td></tr>';
+  }).join('') : '<tr><td colspan="7" class="empty">'+T('冇申請','No requests')+'</td></tr>';
+  var head=[T('日期','Date'),T('員工','Staff'),T('客戶','Client'),T('額外時間','Extra time'),T('原因','Reason'),T('狀態','Status'),T('操作','Action')].map(function(x){ return '<th>'+x+'</th>'; }).join('');
+  page({wide:true, body:seg+sub+'<div class="tbl"><table><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div>'});
 }
 
 function agoText(ms){
   var m=Math.max(0,Math.round((Date.now()-ms)/60000)), t=new Date(ms);
   var hm=t.getHours()+':'+String(t.getMinutes()).padStart(2,'0');
-  return hm+'（'+(m<1?'啱啱':m+' 分鐘前')+'）';
+  return hm+T('（'+(m<1?'啱啱':m+' 分鐘前')+'）',' ('+(m<1?'just now':m+' min ago')+')');
 }
 function syncNow(){
   busy(true);
   call('syncNow',{}).then(function(r){
     busy(false);
-    toast(r.skipped ? '1 分鐘內啱啱同步過，已顯示最新資料' : '已同步日曆');
+    toast(r.skipped ? T('1 分鐘內啱啱同步過，已顯示最新資料','Synced less than a minute ago – showing the latest data') : T('已同步日曆','Calendar synced'));
     S.admin.data=null; S.schedule=null; S.records=null; renderAdmin();
   }).catch(fail);
 }
 function review(id, decision){
   var e=S.admin.extraList.filter(function(x){return x.id===id;})[0];
-  var title = decision==='Approved'?'批准額外時間？':'拒絕額外時間？';
-  confirmBox(title, esc(e.worker)+'｜'+esc(e.client)+'｜'+e.minutes+' 分鐘<br>'+esc(e.reason), decision==='Approved'?'批准':'拒絕', decision==='Approved'?'blue':'red').then(function(ok){
-    if(!ok) return; busy(true);
-    call('reviewExtra',{requestId:id, decision:decision}).then(function(){ busy(false); toast(decision==='Approved'?'已批准':'已拒絕'); S.admin.extraList=null; renderAdmin(); }).catch(fail);
+  var ok=decision==='Approved';
+  var title = ok?T('批准額外時間？','Approve extra time?'):T('拒絕額外時間？','Reject extra time?');
+  confirmBox(title, esc(e.worker)+'｜'+esc(e.client)+'｜'+minText(e.minutes)+'<br>'+esc(e.reason), ok?T('批准','Approve'):T('拒絕','Reject'), ok?'blue':'red').then(function(yes){
+    if(!yes) return; busy(true);
+    call('reviewExtra',{requestId:id, decision:decision}).then(function(){ busy(false); toast(ok?T('已批准','Approved'):T('已拒絕','Rejected')); S.admin.extraList=null; renderAdmin(); }).catch(fail);
   });
 }
 
 /* ---------------- 開始 ---------------- */
 function start(){
-  if(API_URL.indexOf('PASTE_')===0){ document.getElementById('app').innerHTML='<div class="center"><div class="card">未設定 API_URL：請喺 index.html 頂部填入 API 網址</div></div>'; return; }
+  document.documentElement.lang = LANG==='en' ? 'en' : 'zh-Hant';
+  document.title = T('Warm Hands 員工打卡','Warm Hands Staff Clock-in');
+  if(API_URL.indexOf('PASTE_')===0){ document.getElementById('app').innerHTML='<div class="center"><div class="card">'+T('未設定 API_URL：請喺 index.html 頂部填入 API 網址','API_URL is not set: please add the API URL at the top of index.html')+'</div></div>'; return; }
   if(!getToken()){ showLogin(''); return; }
-  document.getElementById('app').innerHTML='<div class="center"><div><div class="spin"></div><div class="muted">載入中…</div></div></div>';
+  document.getElementById('app').innerHTML='<div class="center"><div><div class="spin"></div><div class="muted">'+T('載入中…','Loading…')+'</div></div></div>';
   call('me',{}).then(function(d){
     S.me=d.me; S.today=d.today; S.canAdmin=d.canAdmin; S.canView=d.canView;
     render();
   }).catch(function(e){
     var msg=(e&&e.message)||String(e), m=msg.match(/NOT_REGISTERED:(.*)$/);
-    if(/^TOKEN_|請重新登入/.test(msg)) return;                // 已顯示登入畫面
-    document.getElementById('app').innerHTML='<div class="center"><div style="max-width:340px">'+
-      '<div style="color:var(--blue);margin-bottom:8px"><svg width="56" height="56" viewBox="0 0 24 24" fill="currentColor"><path d="M12 3 2 11h3v9h6v-6h2v6h6v-9h3z"/></svg></div>'+
-      '<div style="font-size:24px;font-weight:800;color:var(--blue)">Warm Hands</div><div class="muted small" style="margin-bottom:22px">Home Care Services</div>'+
-      (m ? '<div class="card"><b>帳戶未登記</b><div class="muted small" style="margin-top:8px;line-height:1.6">你而家用緊 <b>'+esc(m[1])+'</b> 登入。<br>只允許已登記嘅員工帳戶，請聯絡公司加入，或者轉用已登記嘅 Gmail。</div></div>'+
-           '<button class="btn" style="margin-top:12px" onclick="signOut()">用其他帳戶登入</button>'
-         : '<div class="card"><b>載入失敗</b><div class="muted small" style="margin-top:8px">'+esc(msg)+'</div></div>'+
-           '<button class="btn" style="margin-top:12px" onclick="start()">再試一次</button>')+'</div></div>';
+    if(msg==='RELOGIN') return;                // 已顯示登入畫面
+    document.getElementById('app').innerHTML='<div class="toplang">'+langBtn()+'</div><div class="center"><div style="max-width:340px">'+brandHtml()+
+      (m ? '<div class="card"><b>'+T('帳戶未登記','Account not registered')+'</b><div class="muted small" style="margin-top:8px;line-height:1.6">'+
+             T('你而家用緊 <b>'+esc(m[1])+'</b> 登入。<br>只允許已登記嘅員工帳戶，請聯絡公司加入，或者轉用已登記嘅 Gmail。',
+               'You are signed in as <b>'+esc(m[1])+'</b>.<br>Only registered staff accounts can use this app. Please contact the office, or sign in with your registered Gmail.')+'</div></div>'+
+           '<button class="btn" style="margin-top:12px" onclick="signOut()">'+T('用其他帳戶登入','Sign in with another account')+'</button>'
+         : '<div class="card"><b>'+T('載入失敗','Could not load')+'</b><div class="muted small" style="margin-top:8px">'+esc(trServer(msg))+'</div></div>'+
+           '<button class="btn" style="margin-top:12px" onclick="start()">'+T('再試一次','Try again')+'</button>')+'</div></div>';
   });
 }
 start();
