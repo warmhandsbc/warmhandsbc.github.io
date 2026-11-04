@@ -276,7 +276,7 @@ function showLogin(note){
     (note?'<div class="small" style="color:var(--red);margin-bottom:12px">'+esc(note)+'</div>':'')+
     '<div id="gbtn" style="display:flex;justify-content:center;min-height:44px"></div>'+
     '<div class="muted small" style="margin-top:22px">'+T('只允許已登記嘅員工帳戶','Only registered staff accounts can sign in')+'</div>'+
-    '<div class="small" style="margin-top:28px"><a href="privacy.html">'+T('私隱政策','Privacy Policy')+'</a></div></div></div>';
+    '<div class="small" style="margin-top:28px"><a href="https://www.warmhandsbc.ca/about-4-1">'+T('私隱政策','Privacy Policy')+'</a></div></div></div>';
   initGis(function(){
     google.accounts.id.renderButton(document.getElementById('gbtn'),
       { theme:'outline', size:'large', shape:'pill', text:'signin_with', locale: LANG==='en'?'en':'zh-TW', width:280 });
