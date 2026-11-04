@@ -124,7 +124,7 @@ var IC = {
 function esc(s){ return String(s==null?'':s).replace(/[&<>"']/g,function(c){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];}); }
 /* ================== 設定（只改呢兩行） ================== */
 // API project（WarmHands Clock Sheet）部署後嘅 …/exec 網址
-var API_URL = 'https://script.google.com/macros/s/AKfycbyZmXS-MtEBVRDAcuN3RiPVy0g5YcaDuT3bakGf_l4DK90qIsMgYNgT-fifzfPBE-ni/exec';
+var API_URL = 'PASTE_API_EXEC_URL_HERE';
 // Google Cloud OAuth Client ID
 var CLIENT_ID = '133570870998-sn0e1o2qu98c038kpd36cvuo7lcteoru.apps.googleusercontent.com';
 /* ======================================================= */
@@ -444,19 +444,22 @@ function submitExtra(){
 /* ---------------- 管理員 ---------------- */
 function renderAdmin(){
   var A=S.admin;
-  if(!A.date){ A.date=S.today; A.from=addDaysK(S.today,-6); A.to=S.today; }
+  if(!A.date){ A.date=S.today; A.from=addDaysK(S.today,-6); A.to=S.today; A.sFrom=S.today; A.sTo=addDaysK(S.today,6); }
   var seg='<div class="seg">'+[['schedule','員工更表'],['records','打卡紀錄'],['extra','額外時間審批']].map(function(x){
     return '<button class="'+(A.sub===x[0]?'on':'')+'" onclick="S.admin.sub=\''+x[0]+'\';S.admin.data=null;renderAdmin()">'+x[1]+'</button>'; }).join('')+'</div>';
   if(A.sub==='extra') return renderAdminExtra(seg);
   var isRec = A.sub==='records';
-  var q = isRec ? {from:A.from,to:A.to,staffId:A.staffId} : {from:A.date,to:A.date,staffId:A.staffId};
+  var q = isRec ? {from:A.from,to:A.to,staffId:A.staffId} : {from:A.sFrom,to:A.sTo,staffId:A.staffId};
   if(!A.data){ page({wide:true, body:seg+'<div class="center" style="min-height:40vh"><div class="spin"></div></div>'});
     return call('adminShifts',q).then(function(d){ A.data=d; renderAdmin(); }).catch(fail); }
   var d=A.data;
   var staffOpts='<option value="">所有員工</option>'+(d.staff||[]).map(function(x){ return '<option value="'+esc(x.staffId)+'"'+(x.staffId===A.staffId?' selected':'')+'>'+esc(x.name||x.staffId)+'</option>'; }).join('');
   var filters='<div class="filters">'+(isRec
       ? '<input type="date" class="in" value="'+A.from+'" onchange="S.admin.from=this.value;S.admin.data=null;renderAdmin()"> 至 <input type="date" class="in" value="'+A.to+'" onchange="S.admin.to=this.value;S.admin.data=null;renderAdmin()">'
-      : '<button class="mini ok" onclick="S.admin.date=addDaysK(S.admin.date,-1);S.admin.data=null;renderAdmin()">‹</button><input type="date" class="in" value="'+A.date+'" onchange="S.admin.date=this.value;S.admin.data=null;renderAdmin()"><button class="mini ok" onclick="S.admin.date=addDaysK(S.admin.date,1);S.admin.data=null;renderAdmin()">›</button>')+
+      : '<input type="date" class="in" value="'+A.sFrom+'" onchange="setSRange(this.value,S.admin.sTo)"> 至 <input type="date" class="in" value="'+A.sTo+'" onchange="setSRange(S.admin.sFrom,this.value)">'+
+        '<button class="mini ok" onclick="setSRange(S.today,S.today)">今日</button>'+
+        '<button class="mini ok" onclick="setSRange(S.today,addDaysK(S.today,6))">7 日</button>'+
+        '<button class="mini ok" onclick="setSRange(S.today,addDaysK(S.today,30))">30 日</button>')+
     '<select class="in" onchange="S.admin.staffId=this.value;S.admin.data=null;renderAdmin()">'+staffOpts+'</select>'+
     '<button class="mini ok" onclick="S.admin.data=null;renderAdmin()">重新整理</button>'+
     '<button class="mini ok" style="background:var(--blue);color:#fff" onclick="syncNow()">⟳ 立即同步日曆</button>'+
@@ -469,11 +472,19 @@ function renderAdmin(){
   var rows = l.length ? l.map(function(s){
     return isRec
       ? '<tr><td>'+esc(s.date)+'</td><td>'+esc(s.worker)+'</td><td>'+esc(s.client)+'</td><td>'+t12(s.start)+' – '+t12(s.end)+'</td><td>'+(s.clockIn?t12(s.clockIn):'—')+'</td><td>'+(s.clockOut?t12(s.clockOut):'—')+'</td><td>'+(s.actualHrs!=null?s.actualHrs:'—')+'</td><td>'+(s.extraMin||'')+'</td><td>'+chipFor(s)+noteOf(s)+'</td><td>'+payChip(s)+'</td></tr>'
-      : '<tr><td>'+esc(s.worker)+'</td><td>'+esc(s.client)+'</td><td class="wr">'+esc(s.address)+'</td><td>'+t12(s.start)+'</td><td>'+t12(s.end)+'</td><td>'+(s.clockIn?t12(s.clockIn):'—')+'</td><td>'+(s.clockOut?t12(s.clockOut):'—')+'</td><td>'+chipFor(s)+noteOf(s)+'</td><td>'+payChip(s)+'</td></tr>';
+      : '<tr><td>'+esc(dShort(s.date))+'</td><td>'+esc(s.worker)+'</td><td>'+esc(s.client)+'</td><td class="wr">'+esc(s.address)+'</td><td>'+t12(s.start)+'</td><td>'+t12(s.end)+'</td><td>'+(s.clockIn?t12(s.clockIn):'—')+'</td><td>'+(s.clockOut?t12(s.clockOut):'—')+'</td><td>'+chipFor(s)+noteOf(s)+'</td><td>'+payChip(s)+'</td></tr>';
   }).join('') : '<tr><td colspan="10" class="empty">冇資料</td></tr>';
   var head = isRec ? '<th>日期</th><th>員工</th><th>客戶</th><th>預定</th><th>開工</th><th>收工</th><th>時數</th><th>額外(分)</th><th>狀態</th><th>付款</th>'
-                   : '<th>員工</th><th>客戶</th><th>地址</th><th>開始</th><th>結束</th><th>開工打卡</th><th>收工打卡</th><th>狀態</th><th>付款</th>';
+                   : '<th>日期</th><th>員工</th><th>客戶</th><th>地址</th><th>開始</th><th>結束</th><th>開工打卡</th><th>收工打卡</th><th>狀態</th><th>付款</th>';
   page({wide:true, body:seg+filters+stats+'<div class="tbl"><table><thead><tr>'+head+'</tr></thead><tbody>'+rows+'</tbody></table></div>'});
+}
+
+/** 員工更表日期範圍（API 最多 62 日） */
+function setSRange(f,t){
+  if(!f||!t) return;
+  if(t<f){ var x=f; f=t; t=x; }
+  if(addDaysK(f,61) < t){ t=addDaysK(f,61); toast('日期範圍最多 62 日，已調整做 '+t); }
+  S.admin.sFrom=f; S.admin.sTo=t; S.admin.data=null; renderAdmin();
 }
 
 function renderAdminExtra(seg){
