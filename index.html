@@ -90,6 +90,23 @@
   .stats{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:12px}
   .stat{background:#fff;border:1px solid var(--line);border-radius:12px;padding:10px 14px;min-width:96px}
   .stat b{display:block;font-size:20px}
+  /* calendar */
+  .cal{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:4px}
+  .cal .wd{font-size:11.5px;color:var(--gray);text-align:center;font-weight:600;padding:2px 0}
+  .cday{background:#fff;border:1px solid var(--line);border-radius:10px;min-height:66px;padding:4px 4px 5px;text-align:left;display:flex;flex-direction:column;gap:2px;min-width:0}
+  .cday .dn{font-weight:700;font-size:13px;line-height:1.2}
+  .cday.past{background:#f7f9fc;color:var(--gray)}
+  .cday.today{border:2px solid var(--blue)}
+  .cday.sel{background:var(--blue-l)}
+  .cday.blank{background:transparent;border:0}
+  .ev{display:block;font-size:10.5px;line-height:1.35;padding:1px 4px;border-radius:4px;background:var(--blue-l);color:var(--blue);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ev.green{background:var(--green-l);color:var(--green)} .ev.red{background:var(--red-l);color:var(--red)}
+  .ev.amber{background:var(--amber-l);color:#9a6b00} .ev.gray{background:#eef1f5;color:var(--gray);text-decoration:line-through}
+  .more{font-size:10.5px;color:var(--gray);padding-left:2px}
+  .wide .cday{min-height:96px}
+  .tog{display:flex;gap:4px;background:#e9eef5;padding:3px;border-radius:10px;width:max-content;margin:2px 0 12px}
+  .tog button{padding:7px 16px;border-radius:8px;background:none;font-weight:600;color:var(--gray);font-size:14px}
+  .tog button.on{background:#fff;color:var(--blue);box-shadow:0 1px 3px rgba(0,0,0,.08)}
   a{color:var(--blue)}
   .langbtn{background:var(--blue-l);color:var(--blue);font-weight:700;font-size:13px;padding:6px 12px;border-radius:99px;white-space:nowrap}
   .toplang{position:fixed;top:12px;right:16px;z-index:7}
@@ -103,7 +120,8 @@
 /* ---------------- 狀態 ---------------- */
 var S = { me:null, canAdmin:false, canView:false, today:'', tab:'home',
   schedule:null, records:null, extras:null, detail:null, extraFor:null,
-  admin:{ sub:'schedule', date:'', from:'', to:'', staffId:'', data:null, extraStatus:'Pending', extraList:null } };
+  admin:{ sub:'schedule', date:'', from:'', to:'', staffId:'', data:null, extraStatus:'Pending', extraList:null },
+  cal:{ view:'cal', data:null, sel:'' } };
 var timer = null;
 
 /* ---------------- 工具 ---------------- */
@@ -299,7 +317,7 @@ function showLogin(note){
 }
 function signOut(){
   store(TOKEN_KEY,null);
-  S.me=null; S.schedule=null; S.records=null; S.extras=null; S.admin.data=null; S.admin.extraList=null; S.detail=null; S.tab='home';
+  S.me=null; S.schedule=null; S.records=null; S.extras=null; S.admin.data=null; S.admin.extraList=null; S.detail=null; S.tab='home'; S.cal.data=null; S.cal.sel='';
   if(window.google && google.accounts && google.accounts.id) google.accounts.id.disableAutoSelect();
   showLogin('');
 }
@@ -371,7 +389,7 @@ function page(o){
 function loading(title){ page({title:title||'', body:'<div class="center" style="min-height:50vh"><div><div class="spin"></div><div class="muted">'+T('載入中…','Loading…')+'</div></div></div>'}); }
 
 function go(tab){ S.tab=tab; S.detail=null; render(); }
-function reload(){ S.schedule=null; S.records=null; S.extras=null; S.admin.data=null; S.admin.extraList=null; render(); }
+function reload(){ S.schedule=null; S.records=null; S.extras=null; S.admin.data=null; S.admin.extraList=null; S.cal.data=null; render(); }
 
 function render(){
   if(S.detail) return renderDetail();
@@ -405,16 +423,65 @@ function renderHome(){
   page({body:body});
 }
 
-/* ---------------- 工作安排 ---------------- */
+/* ---------------- 工作安排（日曆 / 列表） ---------------- */
+function schedToggle(){
+  return '<div class="tog"><button class="'+(S.cal.view==='cal'?'on':'')+'" onclick="S.cal.view=\'cal\';renderSchedule()">'+T('日曆','Calendar')+'</button>'+
+    '<button class="'+(S.cal.view==='list'?'on':'')+'" onclick="S.cal.view=\'list\';renderSchedule()">'+T('列表','List')+'</button></div>';
+}
 function renderSchedule(){
+  if(S.cal.view==='cal') return renderCalendar();
   if(!S.schedule){ loading(); return loadSchedule().then(renderSchedule).catch(fail); }
   var by={}, keys=[];
   S.schedule.shifts.forEach(function(s){ if(!by[s.date]){by[s.date]=[];keys.push(s.date);} by[s.date].push(s); });
   var n=S.schedule.shifts.length;
-  var body='<div class="sec" style="margin-top:4px"><h2>'+T('未來工作安排','Upcoming shifts')+'</h2><span class="muted small">'+T('共 '+n+' 更',n+' shifts')+'</span></div>';
+  var body=schedToggle()+'<div class="sec" style="margin-top:4px"><h2>'+T('未來工作安排','Upcoming shifts')+'</h2><span class="muted small">'+T('共 '+n+' 更',n+' shifts')+'</span></div>';
   body+= keys.length ? keys.map(function(k){ return '<div class="day">'+(k===S.today?T('今日・','Today · '):'')+dShort(k)+'</div>'+by[k].map(function(s){return shiftCard(s,false);}).join(''); }).join('')
     : '<div class="card empty">'+T('暫時冇排更','No upcoming shifts')+'</div>';
   page({body:body});
+}
+
+function evClass(s){
+  return {done:'green',working:'green',missed:'red',missedOut:'red',cancelled:'gray',invalid:'amber'}[s.state] ||
+    (s.state==='open' && String(s.label||'').indexOf('遲到')>=0 ? 'amber' : '');
+}
+function shortTime(hm){ if(!hm) return ''; var p=hm.split(':'), h=+p[0]; return ((h%12)||12)+(p[1]==='00'?'':':'+p[1])+(h<12?'a':'p'); }
+function firstName(n){ return String(n||'').trim().split(/\s+/)[0]; }
+
+function renderCalendar(){
+  var C=S.cal;
+  if(!C.data){ loading(); return call('calendar',{}).then(function(d){ C.data=d; if(!C.sel) C.sel=d.today; renderCalendar(); }).catch(fail); }
+  var d=C.data, mineOnly = d.scope==='mine';
+  var by={};
+  d.shifts.forEach(function(s){ (by[s.date]=by[s.date]||[]).push(s); });
+  var scopeTxt = mineOnly ? T('你嘅更','Your shifts') : d.scope==='myClients' ? T('你負責嘅客人嘅更','Shifts for your clients') : T('全部員工嘅更','All staff shifts');
+  var body=schedToggle()+'<div class="sec" style="margin-top:4px"><h2>'+scopeTxt+'</h2><span class="muted small">'+dShort(d.from)+' – '+dShort(d.to)+'</span></div>';
+  var wdNames = LANG==='en' ? WD_EN : WD.map(function(x){ return x; });
+  var grid='<div class="cal">'+wdNames.map(function(w){ return '<div class="wd">'+w+'</div>'; }).join('');
+  var max = mineOnly ? 3 : 2;
+  for(var k=d.from; k<=d.to; k=addDaysK(k,1)){
+    var list=by[k]||[], cls='cday'+(k<d.today?' past':'')+(k===d.today?' today':'')+(k===C.sel?' sel':'');
+    var evs=list.slice(0,max).map(function(s){
+      var who = mineOnly ? '' : ' '+firstName(s.worker);   // 自己嘅更：格仔只顯示時間，詳情喺下面
+      return '<span class="ev '+evClass(s)+'">'+shortTime(s.start)+esc(who)+'</span>';
+    }).join('') + (list.length>max ? '<span class="more">+'+(list.length-max)+'</span>' : '');
+    grid+='<button class="'+cls+'" onclick="S.cal.sel=\''+k+'\';renderCalendar()"><span class="dn">'+dParts(k).getDate()+'</span>'+evs+'</button>';
+  }
+  var lastWd=dParts(d.to).getDay();
+  for(var b=lastWd+1;b<=6;b++) grid+='<div class="cday blank"></div>';
+  grid+='</div>';
+  var sel=by[C.sel]||[];
+  var dayList='<div class="sec"><h2>'+(C.sel===d.today?T('今日・','Today · '):'')+dShort(C.sel)+'</h2><span class="muted small">'+T('共 '+sel.length+' 更',sel.length+' shifts')+'</span></div>';
+  dayList+= sel.length ? sel.map(function(s){ return s.own ? shiftCard(s,false) : calInfoCard(s); }).join('')
+    : '<div class="card empty">'+T('呢日冇更','No shifts on this day')+'</div>';
+  page({wide:!mineOnly, body:body+grid+dayList});
+}
+function calInfoCard(s){   // 唔係自己嘅更：只顯示資料，唔可以打卡
+  return '<div class="card shift"><div class="ico">'+IC.house+'</div><div style="flex:1;min-width:0">'+
+    '<div class="name">'+esc(s.client)+'</div>'+
+    '<div class="small" style="margin-top:2px">'+T('員工：','Worker: ')+'<b>'+esc(s.worker||'—')+'</b></div>'+
+    '<div class="muted small">'+esc(s.address)+'</div>'+
+    '<div class="time">'+t12(s.start)+' – '+t12(s.end)+(s.clockIn?'<span class="muted small" style="font-weight:400">｜'+T('實際 ','Actual ')+t12(s.clockIn)+' – '+(s.clockOut?t12(s.clockOut):'…')+'</span>':'')+'</div>'+
+    '<div style="margin-top:8px">'+chipFor(s)+(s.payment?' '+payChip(s):'')+'</div>'+noteOf(s)+'</div></div>';
 }
 
 /* ---------------- 紀錄 ---------------- */
@@ -454,15 +521,15 @@ function renderProfile(){
 
 /* ---------------- 工作詳情 / 打卡 ---------------- */
 function findShift(id){
-  var pools=[S.schedule&&S.schedule.shifts, S.records&&S.records.shifts];
+  var pools=[S.schedule&&S.schedule.shifts, S.records&&S.records.shifts, S.cal.data&&S.cal.data.shifts];
   for(var i=0;i<pools.length;i++) if(pools[i]) for(var j=0;j<pools[i].length;j++) if(pools[i][j].id===id) return pools[i][j];
   return null;
 }
 function openShift(id){ S.detail=id; renderDetail(); }
 function closeDetail(){ S.detail=null; render(); }
 function replaceShift(v){
-  [S.schedule&&S.schedule.shifts, S.records&&S.records.shifts].forEach(function(l){
-    if(l) for(var j=0;j<l.length;j++) if(l[j].id===v.id){ var ex=l[j].extras; l[j]=v; v.extras=ex; } });
+  [S.schedule&&S.schedule.shifts, S.records&&S.records.shifts, S.cal.data&&S.cal.data.shifts].forEach(function(l){
+    if(l) for(var j=0;j<l.length;j++) if(l[j].id===v.id){ var ex=l[j].extras, own=l[j].own; l[j]=Object.assign({},v,{extras:ex,own:own}); } });
 }
 
 function renderDetail(){
