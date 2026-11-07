@@ -182,25 +182,39 @@ function trServer(msg){
   }
   return msg;
 }
-function trFlag(f){   // 遲到 / 早走 / 漏打卡 …
-  if(!f || LANG!=='en') return f||'';
-  var map={'遲到':'Late','早走':'Left early','正常':'On time','漏打卡':'Missed clock-in','漏收工':'Missed clock-out'};
-  return String(f).split('、').map(function(x){ return map[x]||x; }).join(', ');
+/* Sheet 入面嘅標注：新紀錄係英文，舊紀錄可能仲係中文 → 兩邊都識轉 */
+var FLAG_ZH = {'On time':'正常','Late':'遲到','Left early':'早走','Missed clock-in':'漏打卡','Missed clock-out':'漏收工','Clocked in':'已打卡','Clocked in (late)':'已打卡（遲到）'};
+var PAY_ZH = {'Paid':'已付','⚠️ Unpaid':'⚠️ 未付款','⚠️ Contract not signed':'⚠️ 未簽約','⚠️ No payment record':'⚠️ 冇付款紀錄'};
+function flip(map){ var o={}; Object.keys(map).forEach(function(k){ o[map[k]]=k; }); return o; }
+var FLAG_EN = flip(FLAG_ZH), PAY_EN = flip(PAY_ZH);
+function trFlag(f){   // Late / Left early / 遲到、早走 …
+  if(!f) return '';
+  var map = LANG==='en' ? FLAG_EN : FLAG_ZH, sep = LANG==='en' ? ', ' : '、';
+  if(map[f]) return map[f];
+  return String(f).split(/、|, /).map(function(x){ return map[x]||x; }).join(sep);
 }
 function trPay(p){
-  if(!p || LANG!=='en') return p||'';
-  var map={'已付':'Paid','⚠️ 未付款':'⚠️ Unpaid','⚠️ 未簽約':'⚠️ Contract not signed','⚠️ 冇付款紀錄':'⚠️ No payment record'};
-  return map[p]||p;
+  if(!p) return '';
+  return (LANG==='en' ? PAY_EN : PAY_ZH)[p] || p;
 }
 function trNote(n){
-  if(!n || LANG!=='en') return n||'';
+  if(!n) return '';
   var m;
-  if(n==='日曆標咗取消') return 'Marked as cancelled in the calendar';
-  if(n==='日曆已刪除') return 'Deleted from the calendar';
-  if(n==='⚠️ 打卡後日曆已刪除呢更') return '⚠️ Shift was deleted from the calendar after clock-in';
-  if((m=n.match(/^⚠️ 認唔到 worker：「(.*)」$/))) return '⚠️ Worker not recognised: "'+m[1]+'"';
-  if(/^（用名配對 worker/.test(n)) return '(Worker matched by name — their email is not on the event)';
-  if((m=n.match(/^⚠️ 打卡後日曆有改動（而家日曆：(.*)）$/))) return '⚠️ Calendar changed after clock-in (calendar now: '+m[1].replace('已取消','cancelled')+')';
+  if(LANG==='en'){
+    if(n==='日曆標咗取消') return 'Marked as cancelled in calendar';
+    if(n==='日曆已刪除') return 'Deleted from calendar';
+    if(n==='⚠️ 打卡後日曆已刪除呢更') return '⚠️ Shift deleted from calendar after clock-in';
+    if((m=n.match(/^⚠️ 認唔到 worker：「(.*)」$/))) return '⚠️ Worker not recognised: "'+m[1]+'"';
+    if(/^（用名配對 worker/.test(n)) return '(Worker matched by name - no email on event)';
+    if((m=n.match(/^⚠️ 打卡後日曆有改動（而家日曆：(.*)）$/))) return '⚠️ Calendar changed after clock-in (calendar now: '+m[1].replace('已取消','cancelled')+')';
+    return n;
+  }
+  if(n==='Marked as cancelled in calendar') return '日曆標咗取消';
+  if(n==='Deleted from calendar') return '日曆已刪除';
+  if(n==='⚠️ Shift deleted from calendar after clock-in') return '⚠️ 打卡後日曆已刪除呢更';
+  if((m=n.match(/^⚠️ Worker not recognised: "(.*)"$/))) return '⚠️ 認唔到 worker：「'+m[1]+'」';
+  if(/^\(Worker matched by name/.test(n)) return '（用名配對 worker，event 冇佢 email）';
+  if((m=n.match(/^⚠️ Calendar changed after clock-in \(calendar now: (.*)\)$/))) return '⚠️ 打卡後日曆有改動（而家日曆：'+m[1].replace('cancelled','已取消')+'）';
   return n;
 }
 function stateLabel(s){
