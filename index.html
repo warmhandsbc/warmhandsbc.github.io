@@ -449,7 +449,10 @@ function firstName(n){ return String(n||'').trim().split(/\s+/)[0]; }
 
 function renderCalendar(){
   var C=S.cal;
-  if(!C.data){ loading(); return call('calendar',{}).then(function(d){ C.data=d; if(!C.sel) C.sel=d.today; renderCalendar(); }).catch(fail); }
+  if(!C.data){ loading(); return call('calendar',{}).then(function(d){ C.data=d; if(!C.sel) C.sel=d.today; renderCalendar(); }).catch(function(e){
+    if(/未知動作/.test((e&&e.message)||'')){ C.view='list'; return renderSchedule(); }   // API 未更新：用返列表
+    fail(e);
+  }); }
   var d=C.data, mineOnly = d.scope==='mine';
   var by={};
   d.shifts.forEach(function(s){ (by[s.date]=by[s.date]||[]).push(s); });
